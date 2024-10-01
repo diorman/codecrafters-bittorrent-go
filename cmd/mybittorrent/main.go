@@ -24,9 +24,43 @@ func decodeBencode(bencodedString string) (interface{}, int, error) {
 		return decodeInteger(bencodedString)
 	case bencodedString[0] == 'l':
 		return decodeList(bencodedString)
+	case bencodedString[0] == 'd':
+		return decodeDictionary(bencodedString)
 	default:
 		return "", 0, fmt.Errorf("Invalid payload")
 	}
+}
+
+func decodeDictionary(bencodedString string) (interface{}, int, error) {
+	dict := map[string]interface{}{}
+	index := 1
+	var key string
+	var parsedValues int
+
+	for index < len(bencodedString) {
+		if bencodedString[index] == 'e' {
+			return dict, index + 1, nil
+		}
+
+		r, length, err := decodeBencode(bencodedString[index:])
+
+		if err != nil {
+			return nil, 0, err
+		}
+
+		index += length
+
+		if parsedValues%2 != 0 {
+			dict[key] = r
+		} else if k, ok := r.(string); ok {
+			key = k
+		} else {
+			return nil, 0, fmt.Errorf("invalid key")
+		}
+		parsedValues++
+	}
+
+	return nil, 0, fmt.Errorf("invalid dictionary")
 }
 
 func decodeList(bencodedString string) (interface{}, int, error) {
@@ -50,28 +84,16 @@ func decodeList(bencodedString string) (interface{}, int, error) {
 }
 
 func decodeInteger(bencodedString string) (interface{}, int, error) {
-	var rawInteger []byte
-
-	for i := 1; i < len(bencodedString); i++ {
-		if (i == 1 && bencodedString[i] == '-') || unicode.IsDigit(rune(bencodedString[i])) {
-			rawInteger = append(rawInteger, bencodedString[i])
-			continue
-		}
-
-		if bencodedString[i] == 'e' {
-			integer, err := strconv.Atoi(string(rawInteger))
-
-			if err != nil {
-				return nil, 0, err
-			}
-
-			return integer, len(rawInteger) + 2, nil
-		}
-
-		break
+	end := strings.Index(bencodedString, "e")
+	if end == -1 {
+		return nil, 0, fmt.Errorf("invalid integer")
+	}
+	integer, err := strconv.Atoi(bencodedString[1:end])
+	if err != nil {
+		return nil, 0, fmt.Errorf("invalid integer: %w", err)
 	}
 
-	return nil, 0, fmt.Errorf("invalid integer")
+	return integer, end + 1, nil
 }
 
 func decodeString(bencodedString string) (interface{}, int, error) {
