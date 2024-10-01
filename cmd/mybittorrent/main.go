@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -50,9 +51,16 @@ func encode(data interface{}) string {
 	}
 
 	if dict, ok := data.(map[string]interface{}); ok {
+		var keys []string
+		for k := range dict {
+			keys = append(keys, k)
+		}
+
+		slices.Sort(keys)
+
 		var encodedValue string
-		for k, v := range dict {
-			encodedValue += encode(k) + encode(v)
+		for _, k := range keys {
+			encodedValue += encode(k) + encode(dict[k])
 		}
 		return fmt.Sprintf("d%se", encodedValue)
 	}
@@ -171,7 +179,18 @@ func runInfoCommand(file string) error {
 
 	infoHash := hex.EncodeToString(h.Sum(nil))
 
-	fmt.Print("Tracker URL: ", dict["announce"], "Length: ", info["length"], "Info Hash: ", infoHash)
+	fmt.Printf("Tracker URL: %s\n", dict["announce"])
+	fmt.Printf("Length: %d\n", info["length"])
+	fmt.Printf("Info Hash: %s\n", infoHash)
+	fmt.Printf("Piece Length: %d\n", info["piece length"])
+	fmt.Println("Piece Hashes:")
+
+	pieces := info["pieces"].(string)
+
+	for i := 0; i < len(pieces); i += 20 {
+		fmt.Println(hex.EncodeToString([]byte(pieces[i : i+20])))
+	}
+
 	return nil
 }
 
