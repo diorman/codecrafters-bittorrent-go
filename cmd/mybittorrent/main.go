@@ -1,11 +1,13 @@
 package main
 
 import (
-	"bytes"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"unicode"
 )
 
@@ -15,7 +17,7 @@ var _ = json.Marshal
 // Example:
 // - 5:hello -> hello
 // - 10:hello12345 -> hello12345
-func decodeBencode(value []byte) (interface{}, int, error) {
+func decodeBencode(value string) (interface{}, int, error) {
 	switch {
 	case unicode.IsDigit(rune(value[0])):
 		return decodeString(value)
@@ -30,7 +32,35 @@ func decodeBencode(value []byte) (interface{}, int, error) {
 	}
 }
 
-func decodeDictionary(value []byte) (interface{}, int, error) {
+func encode(data interface{}) string {
+	if str, ok := data.(string); ok {
+		return fmt.Sprintf("%d:%s", len(str), str)
+	}
+
+	if integer, ok := data.(int); ok {
+		return fmt.Sprintf("i%de", integer)
+	}
+
+	if list, ok := data.([]interface{}); ok {
+		var encodedValue string
+		for _, item := range list {
+			encodedValue += encode(item)
+		}
+		return fmt.Sprintf("l%se", encodedValue)
+	}
+
+	if dict, ok := data.(map[string]interface{}); ok {
+		var encodedValue string
+		for k, v := range dict {
+			encodedValue += encode(k) + encode(v)
+		}
+		return fmt.Sprintf("d%se", encodedValue)
+	}
+
+	return ""
+}
+
+func decodeDictionary(value string) (interface{}, int, error) {
 	dict := map[string]interface{}{}
 	index := 1
 	var key string
@@ -62,7 +92,7 @@ func decodeDictionary(value []byte) (interface{}, int, error) {
 	return nil, 0, fmt.Errorf("invalid dictionary")
 }
 
-func decodeList(value []byte) (interface{}, int, error) {
+func decodeList(value string) (interface{}, int, error) {
 	list := []interface{}{}
 	index := 1
 
@@ -82,8 +112,8 @@ func decodeList(value []byte) (interface{}, int, error) {
 	return nil, 0, fmt.Errorf("invalid list")
 }
 
-func decodeInteger(value []byte) (interface{}, int, error) {
-	end := bytes.IndexRune(value, 'e')
+func decodeInteger(value string) (interface{}, int, error) {
+	end := strings.IndexRune(value, 'e')
 	if end == -1 {
 		return nil, 0, fmt.Errorf("invalid integer")
 	}
@@ -95,8 +125,8 @@ func decodeInteger(value []byte) (interface{}, int, error) {
 	return integer, end + 1, nil
 }
 
-func decodeString(value []byte) (interface{}, int, error) {
-	firstColonIndex := bytes.IndexRune(value, ':')
+func decodeString(value string) (interface{}, int, error) {
+	firstColonIndex := strings.IndexRune(value, ':')
 	lengthStr := value[:firstColonIndex]
 
 	length, err := strconv.Atoi(string(lengthStr))
@@ -108,7 +138,7 @@ func decodeString(value []byte) (interface{}, int, error) {
 }
 
 func runDecodeCommand(value string) error {
-	decoded, _, err := decodeBencode([]byte(value))
+	decoded, _, err := decodeBencode(value)
 	if err != nil {
 		return err
 	}
@@ -125,7 +155,7 @@ func runInfoCommand(file string) error {
 		return err
 	}
 
-	decodedValue, _, err := decodeBencode(payload)
+	decodedValue, _, err := decodeBencode(string(payload))
 
 	if err != nil {
 		return err
@@ -133,8 +163,15 @@ func runInfoCommand(file string) error {
 
 	dict := decodedValue.(map[string]interface{})
 	info := dict["info"].(map[string]interface{})
+	h := sha1.New()
 
-	fmt.Print("Tracker URL: ", dict["announce"], "Length: ", info["length"])
+	if _, err := h.Write([]byte(encode(info))); err != nil {
+		return err
+	}
+
+	infoHash := hex.EncodeToString(h.Sum(nil))
+
+	fmt.Print("Tracker URL: ", dict["announce"], "Length: ", info["length"], "Info Hash: ", infoHash)
 	return nil
 }
 
