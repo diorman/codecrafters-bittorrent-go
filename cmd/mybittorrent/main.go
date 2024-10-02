@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -166,7 +167,7 @@ type TorrentInfo struct {
 	length      int
 	hash        []byte
 	pieceLength int
-	pieces      [][]byte
+	pieceHashes [][]byte
 }
 
 func getInfo(payload string) (*TorrentInfo, error) {
@@ -195,7 +196,7 @@ func getInfo(payload string) (*TorrentInfo, error) {
 		length:      info["length"].(int),
 		hash:        h.Sum(nil),
 		pieceLength: info["piece length"].(int),
-		pieces:      pieces,
+		pieceHashes: pieces,
 	}, nil
 }
 
@@ -217,28 +218,17 @@ func runInfoCommand(file string) error {
 	fmt.Printf("Info Hash: %s\n", hex.EncodeToString(info.hash))
 	fmt.Printf("Piece Length: %d\n", info.pieceLength)
 	fmt.Println("Piece Hashes:")
-	for _, piece := range info.pieces {
+	for _, piece := range info.pieceHashes {
 		fmt.Println(hex.EncodeToString(piece))
 	}
 
 	return nil
 }
 
-func runPeersCommand(file string) error {
-	payload, err := os.ReadFile(file)
-	if err != nil {
-		return fmt.Errorf("could not read file in peers command: %w", err)
-	}
-
-	info, err := getInfo(string(payload))
-
-	if err != nil {
-		return err
-	}
-
+func getPeers(info TorrentInfo) ([]string, error) {
 	u, err := url.Parse(info.trackerURL)
 	if err != nil {
-		return fmt.Errorf("could not parse URL in peers command: %w", err)
+		return nil, fmt.Errorf("could not parse URL: %w", err)
 	}
 
 	query := u.Query()
@@ -254,31 +244,75 @@ func runPeersCommand(file string) error {
 
 	r, err := http.Get(u.String())
 	if err != nil {
-		return fmt.Errorf("could not make HTTP request in peers command: %w", err)
+		return nil, fmt.Errorf("could not make HTTP request: %w", err)
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		return fmt.Errorf("could not read HTTP response in peers command: %w", err)
+		return nil, fmt.Errorf("could not read HTTP response: %w", err)
 	}
 	defer r.Body.Close()
 
 	parsedResp, _, err := decodeBencode(string(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	m := parsedResp.(map[string]interface{})
-	peers := []byte(m["peers"].(string))
+	rawPeers := []byte(m["peers"].(string))
+	var peers []string
 
-	for i := 0; i < len(peers); i += 6 {
-		peer := peers[i : i+6]
+	for i := 0; i < len(rawPeers); i += 6 {
+		peer := rawPeers[i : i+6]
 		ip := fmt.Sprintf("%d.%d.%d.%d", peer[0], peer[1], peer[2], peer[3])
 		port := binary.BigEndian.Uint16(peer[4:])
-		fmt.Printf("%s:%d\n", ip, port)
+		peers = append(peers, fmt.Sprintf("%s:%d", ip, port))
+	}
+
+	return peers, nil
+}
+
+func runPeersCommand(file string) error {
+	payload, err := os.ReadFile(file)
+	if err != nil {
+		return fmt.Errorf("could not read file in peers command: %w", err)
+	}
+
+	info, err := getInfo(string(payload))
+
+	if err != nil {
+		return err
+	}
+
+	peers, err := getPeers(*info)
+	if err != nil {
+		return err
+	}
+
+	for _, peer := range peers {
+		fmt.Println(peer)
 	}
 
 	return nil
+}
+
+func performHandshake(conn net.Conn, info TorrentInfo) ([]byte, error) {
+	message := []byte{19}
+	message = append(message, []byte("BitTorrent protocol")...)
+	message = append(message, []byte{0, 0, 0, 0, 0, 0, 0, 0}...)
+	message = append(message, info.hash...)
+	message = append(message, []byte("00112233445566778899")...)
+
+	if _, err := conn.Write(message); err != nil {
+		return nil, fmt.Errorf("error sending message to peer: %w", err)
+	}
+
+	resp := make([]byte, 68)
+	if _, err := conn.Read(resp); err != nil {
+		return nil, fmt.Errorf("error reading message from peer: %w", err)
+	}
+
+	return resp, nil
 }
 
 func runHandshakeCommand(file, peer string) error {
@@ -298,22 +332,169 @@ func runHandshakeCommand(file, peer string) error {
 		return err
 	}
 
-	message := []byte{19}
-	message = append(message, []byte("BitTorrent protocol")...)
-	message = append(message, []byte{0, 0, 0, 0, 0, 0, 0, 0}...)
-	message = append(message, info.hash...)
-	message = append(message, []byte("00112233445566778899")...)
+	defer conn.Close()
+
+	resp, err := performHandshake(conn, *info)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Peer ID:", hex.EncodeToString(resp[48:68]))
+
+	return nil
+}
+
+func sendPeerMessage(conn net.Conn, messageId uint32, payload []byte) error {
+	length := len(payload) + 1
+	message := make([]byte, length+4)
+	binary.BigEndian.PutUint32(message, uint32(length))
+	message[4] = byte(messageId)
+	for i, b := range payload {
+		message[i+5] = b
+	}
 
 	if _, err := conn.Write(message); err != nil {
-		return fmt.Errorf("error sending message to peer: %w", err)
+		return err
 	}
 
-	var resp []byte
-	if _, err := conn.Read(resp); err != nil {
-		return fmt.Errorf("error reading message from peer: %w", err)
+	fmt.Printf("sent message id: %d with len: %d, len2: %d\n", messageId, length, len(message))
+	fmt.Println(message)
+
+	return nil
+}
+
+type PeerMessage struct {
+	id      byte
+	payload []byte
+}
+
+func readPeerMessage(conn net.Conn) (*PeerMessage, error) {
+	header := make([]byte, 5)
+	if _, err := conn.Read(header); err != nil {
+		return nil, err
 	}
 
-	fmt.Println(string(resp[48:68]))
+	length := binary.BigEndian.Uint32(header[:4])
+	id := header[4]
+
+	fmt.Printf("received message id: %d with len: %d\n", id, length)
+
+	payload := make([]byte, length-1)
+
+	if _, err := io.ReadAtLeast(conn, payload, len(payload)); err != nil {
+		// if _, err := conn.Read(payload); err != nil {
+		return nil, err
+	}
+
+	return &PeerMessage{id: id, payload: payload}, nil
+}
+
+func runDownloadPieceCommand(args []string) error {
+	outputFile := args[3]
+	inputFile := args[4]
+
+	pieceIndex, err := strconv.Atoi(args[5])
+	if err != nil {
+		return err
+	}
+
+	payload, err := os.ReadFile(inputFile)
+	if err != nil {
+		return fmt.Errorf("could not read input file: %w", err)
+	}
+
+	info, err := getInfo(string(payload))
+	if err != nil {
+		return err
+	}
+
+	peers, err := getPeers(*info)
+	if err != nil {
+		return err
+	}
+
+	conn, err := net.Dial("tcp", peers[0])
+	if err != nil {
+		return fmt.Errorf("could not connect to peer %s: %w", peers[0], err)
+	}
+
+	defer conn.Close()
+
+	if _, err := performHandshake(conn, *info); err != nil {
+		return err
+	}
+
+	bitfieldMsg, err := readPeerMessage(conn)
+	if err != nil {
+		return err
+	}
+	if bitfieldMsg.id != 5 {
+		return fmt.Errorf("unexpected bitfield message. Got id: %d", bitfieldMsg.id)
+	}
+
+	if err := sendPeerMessage(conn, 2, nil); err != nil {
+		return err
+	}
+
+	unchokeMsg, err := readPeerMessage(conn)
+	if err != nil {
+		return err
+	}
+	if unchokeMsg.id != 1 {
+		return fmt.Errorf("unexpected unchoke message. Got id: %d", unchokeMsg.id)
+	}
+
+	blockMaxSize := 16 * 1024
+	pieceLength := min(info.pieceLength, info.length-info.pieceLength*pieceIndex)
+	nblocks := int(math.Round(float64(pieceLength) / float64(blockMaxSize)))
+	blocks := make([][]byte, nblocks)
+	fmt.Println("piece len:", pieceLength)
+
+	for i := 0; i < nblocks; i++ {
+		blockLength := min(blockMaxSize, pieceLength-i*blockMaxSize)
+		var message []byte
+
+		message = binary.BigEndian.AppendUint32(message, uint32(pieceIndex))
+		message = binary.BigEndian.AppendUint32(message, uint32(i*blockMaxSize))
+		message = binary.BigEndian.AppendUint32(message, uint32(blockLength))
+
+		fmt.Println("offset: ", i*blockMaxSize, "len: ", blockLength, message)
+
+		if err := sendPeerMessage(conn, 6, message); err != nil {
+			return err
+		}
+		// }
+
+		// for i := 0; i < nblocks; i++ {
+		// if i == 1 {
+		// 	continue
+		// }
+
+		pieceMsg, err := readPeerMessage(conn)
+		if err != nil {
+			return err
+		}
+
+		if pieceMsg.id != 7 {
+			return fmt.Errorf("unexpected piece message. Got id: %d", pieceMsg.id)
+		}
+
+		index := binary.BigEndian.Uint32(pieceMsg.payload[4:8]) / uint32(blockMaxSize)
+		fmt.Println(binary.BigEndian.Uint32(pieceMsg.payload[0:4]), index)
+		blocks[index] = pieceMsg.payload[8:]
+	}
+
+	f, err := os.Create(outputFile)
+	if err != err {
+		return err
+	}
+	defer f.Close()
+
+	for _, block := range blocks {
+		if _, err := f.Write(block); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -343,6 +524,13 @@ func main() {
 			fmt.Println(err)
 			os.Exit(1)
 		}
+
+	case "download_piece":
+		if err := runDownloadPieceCommand(os.Args); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+
 	default:
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
