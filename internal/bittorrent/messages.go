@@ -6,133 +6,106 @@ import (
 	"fmt"
 )
 
-type HandshakeMessage struct {
-	Hash   []byte
-	PeerID []byte
+type message interface {
+	marshal() []byte
 }
 
-func (m *HandshakeMessage) bytes() []byte {
+type handshakeMessage struct {
+	hash   [20]byte
+	peerID [20]byte
+}
+
+func (m handshakeMessage) marshal() []byte {
 	var b [68]byte
 	b[0] = 19
 	copy(b[1:], "BitTorrent protocol")
-	copy(b[28:], m.Hash)
-	copy(b[48:], m.PeerID)
+	copy(b[28:], m.hash[:])
+	copy(b[48:], m.peerID[:])
 	return b[:]
 }
 
-func (m *HandshakeMessage) load(b []byte) error {
-	if len(b) != 68 {
-		return errors.New("invalid payload for handshake message")
-	}
+type messageID uint8
 
-	m.Hash = b[28:47]
-	m.PeerID = b[48:]
+const (
+	unchokeMessageID    messageID = 1
+	interestedMessageID messageID = 2
+	bitfieldMessageID   messageID = 5
+	requestMessageID    messageID = 6
+	pieceMessageID      messageID = 7
+)
 
-	return nil
+type peerMessage struct {
+	id      messageID
+	payload []byte
 }
 
-type outgoingPeerMessage interface {
-	id() byte
-	bytes() []byte
-}
-
-type incomingPeerMessage interface {
-	id() byte
-	load([]byte) error
-}
-
-type bitfieldMessage struct{}
-
-func (m *bitfieldMessage) id() byte {
-	return 5
-}
-
-func (m *bitfieldMessage) load(b []byte) error {
-	return nil
-}
-
-type interestedMessage struct{}
-
-func (m *interestedMessage) id() byte {
-	return 2
-}
-
-func (m *interestedMessage) bytes() []byte {
-	return nil
-}
-
-type unchokeMessage struct{}
-
-func (m *unchokeMessage) id() byte {
-	return 1
-}
-
-func (m *unchokeMessage) load(b []byte) error {
-	if len(b) > 0 {
-		return errors.New("unchoke message is not expected to have payload")
-	}
-	return nil
-}
-
-type requestMessage struct {
-	index  uint32
-	begin  uint32
-	length uint32
-}
-
-func (m *requestMessage) id() byte {
-	return 6
-}
-
-func (m *requestMessage) bytes() []byte {
-	var buf [12]byte
-	binary.BigEndian.PutUint32(buf[0:], m.index)
-	binary.BigEndian.PutUint32(buf[4:], m.begin)
-	binary.BigEndian.PutUint32(buf[8:], m.length)
-	return buf[:]
-}
-
-type pieceMessage struct {
-	index uint32
-	begin uint32
-	block []byte
-}
-
-func (m *pieceMessage) id() byte {
-	return 7
-}
-
-func (m *pieceMessage) load(b []byte) error {
-	if len(b) < 8 {
-		return errors.New("piece message payload must be at least 8 bytes long")
-	}
-	m.index = binary.BigEndian.Uint32(b)
-	m.begin = binary.BigEndian.Uint32(b[4:])
-	if len(b) > 8 {
-		m.block = b[8:]
-	}
-	return nil
-}
-
-type messageEnvelope struct {
-	messageID byte
-	payload   []byte
-}
-
-func (e messageEnvelope) bytes() []byte {
-	length := len(e.payload) + 1
+func (m peerMessage) marshal() []byte {
+	length := len(m.payload) + 1
 	buf := make([]byte, length+4)
 	binary.BigEndian.PutUint32(buf, uint32(length))
-	buf[4] = e.messageID
-	for i, b := range e.payload {
+	buf[4] = byte(m.id)
+	for i, b := range m.payload {
 		buf[i+5] = b
 	}
 	return buf
 }
 
-func (e messageEnvelope) coerceInto(msg incomingPeerMessage) error {
-	if e.messageID != msg.id() {
-		return fmt.Errorf("could not coerce envelop with message id %d to message id %d", e.messageID, msg.id())
+func validateMessageID(m peerMessage, id messageID) error {
+	if m.id != id {
+		return fmt.Errorf("expected message id %v but got %v", id, m.id)
 	}
-	return msg.load(e.payload)
+	return nil
+}
+
+func validateBitfieldMessage(m peerMessage) error {
+	if err := validateMessageID(m, bitfieldMessageID); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateUnchokeMessage(m peerMessage) error {
+	if err := validateMessageID(m, unchokeMessageID); err != nil {
+		return err
+	}
+
+	if len(m.payload) > 0 {
+		return errors.New("received unchoke message with unexpected payload")
+	}
+
+	return nil
+}
+
+func createRequestMessage(index, begin, length int) peerMessage {
+	var payload [12]byte
+	binary.BigEndian.PutUint32(payload[0:], uint32(index))
+	binary.BigEndian.PutUint32(payload[4:], uint32(begin))
+	binary.BigEndian.PutUint32(payload[8:], uint32(length))
+	return peerMessage{id: requestMessageID, payload: payload[:]}
+}
+
+func validatePieceMessage(m peerMessage) error {
+	if err := validateMessageID(m, pieceMessageID); err != nil {
+		return err
+	}
+
+	if len(m.payload) < 8 {
+		return errors.New("piece message payload must be at least 8 bytes long")
+	}
+
+	return nil
+}
+
+type pieceMessagePayload []byte
+
+func (p pieceMessagePayload) index() int {
+	return int(binary.BigEndian.Uint32(p))
+}
+
+func (p pieceMessagePayload) begin() int {
+	return int(binary.BigEndian.Uint32(p[4:]))
+}
+
+func (p pieceMessagePayload) data() []byte {
+	return p[8:]
 }

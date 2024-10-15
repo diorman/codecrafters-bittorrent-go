@@ -23,30 +23,30 @@ func runDecodeCommand(args []string) error {
 }
 
 func runInfoCommand(args []string) error {
-	torrent, err := bittorrent.LoadManifest(args[2])
+	torrent, err := bittorrent.CreateFromFile(args[2])
 	if err != nil {
 		return err
 	}
 
 	fmt.Printf("Tracker URL: %s\n", torrent.TrackerURL)
 	fmt.Printf("Length: %d\n", torrent.Length)
-	fmt.Printf("Info Hash: %s\n", hex.EncodeToString(torrent.Hash))
+	fmt.Printf("Info Hash: %s\n", hex.EncodeToString(torrent.Hash[:]))
 	fmt.Printf("Piece Length: %d\n", torrent.PieceLength)
 	fmt.Println("Piece Hashes:")
 	for _, hash := range torrent.PieceHashes {
-		fmt.Println(hex.EncodeToString(hash))
+		fmt.Println(hex.EncodeToString(hash[:]))
 	}
 
 	return nil
 }
 
 func runPeersCommand(args []string) error {
-	manifest, err := bittorrent.LoadManifest(args[2])
+	torrent, err := bittorrent.CreateFromFile(args[2])
 	if err != nil {
 		return err
 	}
 
-	peerAddresses, err := manifest.PeerAddresses()
+	peerAddresses, err := torrent.PeerAddresses()
 	if err != nil {
 		return err
 	}
@@ -59,23 +59,18 @@ func runPeersCommand(args []string) error {
 }
 
 func runHandshakeCommand(args []string) error {
-	manifest, err := bittorrent.LoadManifest(args[2])
+	torrent, err := bittorrent.CreateFromFile(args[2])
 	if err != nil {
 		return err
 	}
 
-	client, err := bittorrent.NewPeerClient(manifest, args[3])
+	client, err := bittorrent.NewPeerClient(args[3], torrent.PeerID, torrent.Hash)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 
-	msg, err := client.Handshake()
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("Peer ID:", hex.EncodeToString(msg.PeerID))
+	fmt.Println("Peer ID:", hex.EncodeToString(client.PeerID[:]))
 
 	return nil
 }
@@ -89,23 +84,39 @@ func runDownloadPieceCommand(args []string) error {
 		return err
 	}
 
-	manifest, err := bittorrent.LoadManifest(inputFile)
+	torrent, err := bittorrent.CreateFromFile(inputFile)
 	if err != nil {
 		return err
 	}
 
-	peerAddresses, err := manifest.PeerAddresses()
+	data, err := torrent.DownloadPiece(pieceIndex)
 	if err != nil {
 		return err
 	}
 
-	c, err := bittorrent.NewPeerClient(manifest, peerAddresses[0])
+	f, err := os.Create(outputFile)
+	if err != err {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func runDownloadCommand(args []string) error {
+	outputFile := args[3]
+	inputFile := args[4]
+
+	torrent, err := bittorrent.CreateFromFile(inputFile)
 	if err != nil {
 		return err
 	}
-	defer c.Close()
 
-	data, err := c.DownloadPiece(pieceIndex)
+	data, err := torrent.Download()
 	if err != nil {
 		return err
 	}
@@ -137,6 +148,8 @@ func main() {
 			return runHandshakeCommand
 		case "download_piece":
 			return runDownloadPieceCommand
+		case "download":
+			return runDownloadCommand
 		default:
 			return nil
 		}
