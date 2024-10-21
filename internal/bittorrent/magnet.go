@@ -64,6 +64,19 @@ func (m MagnetLink) Handshake(client *PeerClient) error {
 	return nil
 }
 
+func (m MagnetLink) Info(client *PeerClient) error {
+	x := bencode.Encode(map[string]interface{}{"msg_type": 0, "piece": 0})
+	payload := make([]byte, 0, len(x)+1)
+	payload = append(payload, client.MetadataExtensionID)
+	payload = append(payload, x...)
+
+	if err := client.writeMessage(peerMessage{id: 20, payload: payload}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func ParseMagnetLink(rawURL string) (MagnetLink, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {

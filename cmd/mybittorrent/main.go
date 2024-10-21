@@ -172,6 +172,34 @@ func runMagnetHandshakeCommand(args []string) error {
 	return nil
 }
 
+func runMagnetInfoCommand(args []string) error {
+	m, err := bittorrent.ParseMagnetLink(args[2])
+	if err != nil {
+		return err
+	}
+
+	peerAddresses, err := m.PeerAddresses()
+	if err != nil {
+		return err
+	}
+
+	client, err := bittorrent.NewPeerClient(peerAddresses[0], m.PeerID, m.Hash, true)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	if err := m.Handshake(client); err != nil {
+		return err
+	}
+
+	if err := m.Info(client); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func main() {
 	command := os.Args[1]
 	commandFunc := (func() func([]string) error {
@@ -192,6 +220,8 @@ func main() {
 			return runMagnetParseCommand
 		case "magnet_handshake":
 			return runMagnetHandshakeCommand
+		case "magnet_info":
+			return runMagnetInfoCommand
 		default:
 			return nil
 		}
