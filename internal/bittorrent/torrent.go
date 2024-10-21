@@ -4,14 +4,9 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha1"
-	"encoding/binary"
 	"fmt"
-	"io"
 	"math"
-	"net/http"
-	"net/url"
 	"os"
-	"strconv"
 	"sync"
 
 	"github.com/codecrafters-io/bittorrent-starter-go/internal/bencode"
@@ -27,49 +22,7 @@ type Torrent struct {
 }
 
 func (t Torrent) PeerAddresses() ([]string, error) {
-	u, err := url.Parse(t.TrackerURL)
-	if err != nil {
-		return nil, fmt.Errorf("could not parse BitTorrent tracker URL: %w", err)
-	}
-
-	query := u.Query()
-	query.Add("info_hash", string(t.Hash[:]))
-	query.Add("peer_id", string(t.PeerID[:]))
-	query.Add("port", "6881")
-	query.Add("uploaded", "0")
-	query.Add("downloaded", "0")
-	query.Add("left", strconv.Itoa(t.Length))
-	query.Add("compact", "1")
-	u.RawQuery = query.Encode()
-
-	r, err := http.Get(u.String())
-	if err != nil {
-		return nil, fmt.Errorf("could not request BitTorrent tracker URL: %w", err)
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil, fmt.Errorf("could not read BitTorrent tracker response: %w", err)
-	}
-	defer r.Body.Close()
-
-	obj, err := bencode.Decode(body)
-	if err != nil {
-		return nil, fmt.Errorf("could not decode BitTorrent tracker response: %w", err)
-	}
-
-	m := obj.(map[string]interface{})
-	rawPeerAddresses := []byte(m["peers"].(string))
-	var peerAddresses []string
-
-	for i := 0; i < len(rawPeerAddresses); i += 6 {
-		rawPeerAddress := rawPeerAddresses[i : i+6]
-		ip := fmt.Sprintf("%d.%d.%d.%d", rawPeerAddress[0], rawPeerAddress[1], rawPeerAddress[2], rawPeerAddress[3])
-		port := binary.BigEndian.Uint16(rawPeerAddress[4:])
-		peerAddresses = append(peerAddresses, fmt.Sprintf("%s:%d", ip, port))
-	}
-
-	return peerAddresses, nil
+	return peerAddresses(t.TrackerURL, t.PeerID, t.Hash, t.Length)
 }
 
 func (t Torrent) DownloadPiece(pieceIndex int) ([]byte, error) {
@@ -179,12 +132,12 @@ func (t *Torrent) clients() (clientList, error) {
 
 	clients := make(clientList, 0, len(peerAddresses))
 	for _, a := range peerAddresses {
-		c, err := NewPeerClient(a, t.PeerID, t.Hash)
+		c, err := NewPeerClient(a, t.PeerID, t.Hash, false)
 		if err != nil {
 			return nil, err
 		}
 
-		if err := c.prepare(); err != nil {
+		if err := c.prepareForDownload(); err != nil {
 			return nil, err
 		}
 

@@ -11,8 +11,9 @@ type message interface {
 }
 
 type handshakeMessage struct {
-	hash   [20]byte
-	peerID [20]byte
+	hash             [20]byte
+	peerID           [20]byte
+	extensionSupport bool
 }
 
 func (m handshakeMessage) marshal() []byte {
@@ -21,6 +22,11 @@ func (m handshakeMessage) marshal() []byte {
 	copy(b[1:], "BitTorrent protocol")
 	copy(b[28:], m.hash[:])
 	copy(b[48:], m.peerID[:])
+
+	if m.extensionSupport {
+		b[25] = 16
+	}
+
 	return b[:]
 }
 
