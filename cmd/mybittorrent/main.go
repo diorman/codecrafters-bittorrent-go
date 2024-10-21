@@ -134,6 +134,17 @@ func runDownloadCommand(args []string) error {
 	return nil
 }
 
+func runMagnetParseCommand(args []string) error {
+	m, err := bittorrent.ParseMagnetLink(args[2])
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Tracker URL: %v\n", m.TrackerURL)
+	fmt.Printf("Info Hash: %s\n", hex.EncodeToString(m.Hash[:]))
+	return nil
+}
+
 func main() {
 	command := os.Args[1]
 	commandFunc := (func() func([]string) error {
@@ -150,6 +161,8 @@ func main() {
 			return runDownloadPieceCommand
 		case "download":
 			return runDownloadCommand
+		case "magnet_parse":
+			return runMagnetParseCommand
 		default:
 			return nil
 		}
