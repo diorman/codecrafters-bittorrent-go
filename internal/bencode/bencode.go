@@ -27,7 +27,6 @@ func Encode(data interface{}) []byte {
 		return []byte(fmt.Sprintf("l%se", encodedValue))
 
 	case map[string]interface{}:
-
 		var keys []string
 		for k := range value {
 			keys = append(keys, k)

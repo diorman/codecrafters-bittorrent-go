@@ -13,8 +13,9 @@ import (
 )
 
 type PeerClient struct {
-	conn   net.Conn
-	PeerID [20]byte
+	conn             net.Conn
+	PeerID           [20]byte
+	extensionSupport bool
 }
 
 func NewPeerClient(peerAddress string, peerID, hash [20]byte, extensionSupport bool) (*PeerClient, error) {
@@ -35,6 +36,7 @@ func NewPeerClient(peerAddress string, peerID, hash [20]byte, extensionSupport b
 	}
 
 	c.PeerID = hsmsg.peerID
+	c.extensionSupport = hsmsg.extensionSupport
 
 	return c, nil
 }
@@ -105,11 +107,11 @@ func (c *PeerClient) readHandshakeMessage() (handshakeMessage, error) {
 		return handshakeMessage{}, fmt.Errorf("error reading handshake message: %w", err)
 	}
 
-	m := handshakeMessage{}
-	copy(m.hash[:], buf[28:47])
-	copy(m.peerID[:], buf[48:])
-
-	return m, nil
+	return handshakeMessage{
+		hash:             [20]byte(buf[28:48]),
+		peerID:           [20]byte(buf[48:]),
+		extensionSupport: buf[25] == 16,
+	}, nil
 }
 
 type clientList []*PeerClient

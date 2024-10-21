@@ -162,6 +162,10 @@ func runMagnetHandshakeCommand(args []string) error {
 	}
 	defer client.Close()
 
+	if err := m.Handshake(client); err != nil {
+		return err
+	}
+
 	fmt.Println("Peer ID:", hex.EncodeToString(client.PeerID[:]))
 
 	return nil

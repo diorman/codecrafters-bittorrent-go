@@ -3,9 +3,12 @@ package bittorrent
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/codecrafters-io/bittorrent-starter-go/internal/bencode"
 )
 
 type MagnetLink struct {
@@ -17,6 +20,40 @@ type MagnetLink struct {
 
 func (m MagnetLink) PeerAddresses() ([]string, error) {
 	return peerAddresses(m.TrackerURL, m.PeerID, m.Hash, 1)
+}
+
+func (m MagnetLink) Handshake(client *PeerClient) error {
+	// if err := client.writeMessage(peerMessage{id: bitfieldMessageID}); err != nil {
+	//   return err
+	// }
+
+	if _, err := client.readAndValidatePeerMessage(validateBitfieldMessage); err != nil {
+		return err
+	}
+
+	if !client.extensionSupport {
+		return errors.New("client does not support extensions")
+	}
+
+	x := bencode.Encode(map[string]interface{}{"m": map[string]interface{}{"ut_metadata": 1}})
+
+	p := make([]byte, 0, len(x)+1)
+	p = append(p, 0)
+	p = append(p, x...)
+
+	if err := client.writeMessage(peerMessage{id: 20, payload: p}); err != nil {
+		return err
+	}
+
+	msg, err := client.readPeerMessage()
+	if err != nil {
+		return err
+	}
+
+	if msg.id != 20 {
+		return errors.New("unexpected extension handshake")
+	}
+	return nil
 }
 
 func ParseMagnetLink(rawURL string) (MagnetLink, error) {
