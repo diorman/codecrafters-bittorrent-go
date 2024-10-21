@@ -13,9 +13,10 @@ import (
 )
 
 type PeerClient struct {
-	conn             net.Conn
-	PeerID           [20]byte
-	extensionSupport bool
+	conn                net.Conn
+	PeerID              [20]byte
+	MetadataExtensionID byte
+	extensionSupport    bool
 }
 
 func NewPeerClient(peerAddress string, peerID, hash [20]byte, extensionSupport bool) (*PeerClient, error) {

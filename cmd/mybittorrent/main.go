@@ -166,7 +166,8 @@ func runMagnetHandshakeCommand(args []string) error {
 		return err
 	}
 
-	fmt.Println("Peer ID:", hex.EncodeToString(client.PeerID[:]))
+	fmt.Printf("Peer ID: %v\n", hex.EncodeToString(client.PeerID[:]))
+	fmt.Printf("Peer Metadata Extension ID: %v\n", client.MetadataExtensionID)
 
 	return nil
 }

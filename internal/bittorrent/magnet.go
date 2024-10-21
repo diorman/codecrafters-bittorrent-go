@@ -53,6 +53,14 @@ func (m MagnetLink) Handshake(client *PeerClient) error {
 	if msg.id != 20 {
 		return errors.New("unexpected extension handshake")
 	}
+
+	d, err := bencode.Decode(msg.payload[1:])
+	if err != nil {
+		return err
+	}
+
+	client.MetadataExtensionID = byte(d.(map[string]interface{})["m"].(map[string]interface{})["ut_metadata"].(int))
+
 	return nil
 }
 
