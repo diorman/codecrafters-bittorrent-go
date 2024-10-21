@@ -193,8 +193,18 @@ func runMagnetInfoCommand(args []string) error {
 		return err
 	}
 
-	if err := m.Info(client); err != nil {
+	info, err := m.Info(client)
+	if err != nil {
 		return err
+	}
+
+	fmt.Printf("Tracker URL: %v\n", info.TrackerURL)
+	fmt.Printf("Length: %v\n", info.Length)
+	fmt.Printf("Info Hash: %v\n", hex.EncodeToString(info.Hash[:]))
+	fmt.Printf("Piece Length: %v\n", info.PieceLength)
+	fmt.Println("Piece Hashes:")
+	for _, hash := range info.PieceHashes {
+		fmt.Println(hex.EncodeToString(hash[:]))
 	}
 
 	return nil

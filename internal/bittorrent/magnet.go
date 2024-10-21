@@ -64,17 +64,65 @@ func (m MagnetLink) Handshake(client *PeerClient) error {
 	return nil
 }
 
-func (m MagnetLink) Info(client *PeerClient) error {
+type MagnetInfo struct {
+	TrackerURL  string
+	Length      int
+	PieceLength int
+	PieceHashes [][20]byte
+	Hash        [20]byte
+	Name        string
+}
+
+func (m MagnetLink) Info(client *PeerClient) (MagnetInfo, error) {
 	x := bencode.Encode(map[string]interface{}{"msg_type": 0, "piece": 0})
 	payload := make([]byte, 0, len(x)+1)
 	payload = append(payload, client.MetadataExtensionID)
 	payload = append(payload, x...)
 
 	if err := client.writeMessage(peerMessage{id: 20, payload: payload}); err != nil {
-		return err
+		return MagnetInfo{}, err
 	}
 
-	return nil
+	msg, err := client.readPeerMessage()
+	if err != nil {
+		return MagnetInfo{}, err
+	}
+
+	if msg.id != 20 {
+		return MagnetInfo{}, fmt.Errorf("unexpected error id: %v", msg.id)
+	}
+
+	// if msg.payload[0] != client.MetadataExtensionID {
+	// 	return MagnetInfo{}, fmt.Errorf("expected extension id %v but got %v", client.MetadataExtensionID, msg.payload[0])
+	// }
+
+	d, err := bencode.Decode(msg.payload[1:])
+	if err != nil {
+		return MagnetInfo{}, err
+	}
+
+	size := d.(map[string]interface{})["total_size"].(int)
+
+	metadata, err := bencode.Decode(msg.payload[len(msg.payload)-size:])
+	if err != nil {
+		return MagnetInfo{}, err
+	}
+
+	dict := metadata.(map[string]interface{})
+	rawPieceHashes := dict["pieces"].(string)
+	pieceHashes := make([][20]byte, len(rawPieceHashes)/20)
+	for i := range len(pieceHashes) {
+		copy(pieceHashes[i][:], rawPieceHashes[i*20:])
+	}
+
+	return MagnetInfo{
+		TrackerURL:  m.TrackerURL,
+		Name:        dict["name"].(string),
+		Hash:        m.Hash,
+		PieceLength: dict["piece length"].(int),
+		Length:      dict["length"].(int),
+		PieceHashes: pieceHashes,
+	}, nil
 }
 
 func ParseMagnetLink(rawURL string) (MagnetLink, error) {
