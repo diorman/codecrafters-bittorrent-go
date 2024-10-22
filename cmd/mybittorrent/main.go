@@ -193,18 +193,69 @@ func runMagnetInfoCommand(args []string) error {
 		return err
 	}
 
-	info, err := m.Info(client)
+	torrent, err := m.Info(client)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Tracker URL: %v\n", info.TrackerURL)
-	fmt.Printf("Length: %v\n", info.Length)
-	fmt.Printf("Info Hash: %v\n", hex.EncodeToString(info.Hash[:]))
-	fmt.Printf("Piece Length: %v\n", info.PieceLength)
+	fmt.Printf("Tracker URL: %v\n", torrent.TrackerURL)
+	fmt.Printf("Length: %v\n", torrent.Length)
+	fmt.Printf("Info Hash: %v\n", hex.EncodeToString(torrent.Hash[:]))
+	fmt.Printf("Piece Length: %v\n", torrent.PieceLength)
 	fmt.Println("Piece Hashes:")
-	for _, hash := range info.PieceHashes {
+	for _, hash := range torrent.PieceHashes {
 		fmt.Println(hex.EncodeToString(hash[:]))
+	}
+
+	return nil
+}
+
+func runMagnetDownloadPieceCommand(args []string) error {
+	outputFile := args[3]
+
+	pieceIndex, err := strconv.Atoi(args[5])
+	if err != nil {
+		return err
+	}
+
+	m, err := bittorrent.ParseMagnetLink(args[4])
+	if err != nil {
+		return err
+	}
+
+	peerAddresses, err := m.PeerAddresses()
+	if err != nil {
+		return err
+	}
+
+	client, err := bittorrent.NewPeerClient(peerAddresses[0], m.PeerID, m.Hash, true)
+	if err != nil {
+		return err
+	}
+
+	if err := m.Handshake(client); err != nil {
+		return err
+	}
+
+	torrent, err := m.Info(client)
+	if err != nil {
+		return err
+	}
+
+	client.Close()
+	data, err := torrent.DownloadPiece(pieceIndex)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.Create(outputFile)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := f.Write(data); err != nil {
+		return err
 	}
 
 	return nil
@@ -232,6 +283,8 @@ func main() {
 			return runMagnetHandshakeCommand
 		case "magnet_info":
 			return runMagnetInfoCommand
+		case "magnet_download_piece":
+			return runMagnetDownloadPieceCommand
 		default:
 			return nil
 		}

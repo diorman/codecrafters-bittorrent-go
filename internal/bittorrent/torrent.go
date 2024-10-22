@@ -32,6 +32,8 @@ func (t Torrent) DownloadPiece(pieceIndex int) ([]byte, error) {
 	}
 	defer clients.close()
 
+	fmt.Println("clients connected")
+
 	return t.downloadPiece(clients, pieceIndex)
 }
 
