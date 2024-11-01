@@ -11,20 +11,24 @@ import (
 	"unicode"
 )
 
-func Encode(data interface{}) []byte {
+func Encode(data interface{}) ([]byte, error) {
 	switch value := data.(type) {
 	case string:
-		return []byte(fmt.Sprintf("%d:%s", len(value), value))
+		return []byte(fmt.Sprintf("%d:%s", len(value), value)), nil
 
 	case int:
-		return []byte(fmt.Sprintf("i%de", value))
+		return []byte(fmt.Sprintf("i%de", value)), nil
 
 	case []interface{}:
 		var encodedValue []byte
 		for _, item := range value {
-			encodedValue = append(encodedValue, Encode(item)...)
+			encodedItem, err := Encode(item)
+			if err != nil {
+				return nil, err
+			}
+			encodedValue = append(encodedValue, encodedItem...)
 		}
-		return []byte(fmt.Sprintf("l%se", encodedValue))
+		return []byte(fmt.Sprintf("l%se", encodedValue)), nil
 
 	case map[string]interface{}:
 		var keys []string
@@ -36,13 +40,23 @@ func Encode(data interface{}) []byte {
 
 		var encodedValue []byte
 		for _, k := range keys {
-			encodedValue = append(encodedValue, Encode(k)...)
-			encodedValue = append(encodedValue, Encode(value[k])...)
+			encodedKey, err := Encode(k)
+			if err != nil {
+				return nil, err
+			}
+
+			encodedVal, err := Encode(value[k])
+			if err != nil {
+				return nil, err
+			}
+
+			encodedValue = append(encodedValue, encodedKey...)
+			encodedValue = append(encodedValue, encodedVal...)
 		}
-		return []byte(fmt.Sprintf("d%se", encodedValue))
+		return []byte(fmt.Sprintf("d%se", encodedValue)), nil
 
 	default:
-		return nil
+		return nil, fmt.Errorf("could not bencode encode unsupported type: %T", value)
 	}
 }
 
